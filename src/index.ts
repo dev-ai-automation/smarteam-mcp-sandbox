@@ -31,7 +31,7 @@ const getClient = () => {
 
 app.get("/install", (_req: Request, res: Response) => {
   const scopes = "cms.domains.read cms.functions.read cms.functions.write cms.pages.landing_pages.read cms.pages.site_pages.read cms.source_code.read cms.source_code.write collector.graphql_query.execute collector.graphql_schema.read crm.objects.companies.read crm.objects.contacts.read crm.objects.custom.read crm.objects.custom.write crm.objects.deals.read crm.objects.owners.read crm.schemas.companies.read crm.schemas.contacts.read crm.schemas.custom.read crm.schemas.custom.write crm.schemas.deals.read developer.app_functions.read developer.app_functions.write developer.private_app.temporary_token.read developer.private_app.temporary_token.write developer.projects.write developer.sandboxes.read developer.sandboxes.write developer.secrets.read developer.secrets.write developer.test_accounts.read developer.test_accounts.write files hubdb sandboxes.read sandboxes.write";
-  const authUrl = `https://app.hubspot.com/oauth/authorize?client_id=${CLIENT_ID}&redirect_uri=${REDIRECT_URI}&scope=${scopes}`;
+  const authUrl = `https://app.hubspot.com/oauth/authorize?client_id=${CLIENT_ID}&redirect_uri=${REDIRECT_URI}&scope=${encodeURIComponent(scopes)}`;
   res.redirect(authUrl);
 });
 
