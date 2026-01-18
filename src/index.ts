@@ -47,7 +47,7 @@ const sha256 = (buffer: Buffer) => crypto.createHash("sha256").update(buffer).di
 // --- MCP SERVER SETUP ---
 const mcpServer = new FastMCP({
   name: "HubSpot Senior Automation MCP",
-  version: "1.3.0-pkce",
+  version: "1.3.0",
 });
 
 const getClient = () => {
