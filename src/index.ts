@@ -3,115 +3,88 @@ import { z } from "zod";
 import dotenv from "dotenv";
 import { HubSpotClient } from "./hubspot/client.js";
 import { MCPConfigError } from "./utils/errors.js";
+import axios from "axios";
 
 dotenv.config();
 
-// Configuración flexible para MCP Auth Apps
-const authConfig = {
-  accessToken: process.env.HUBSPOT_ACCESS_TOKEN, // Token obtenido del flujo OAuth de tu HubSpot App
-  clientId: process.env.HUBSPOT_CLIENT_ID,
-  clientSecret: process.env.HUBSPOT_CLIENT_SECRET,
-};
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+const REDIRECT_URI = process.env.REDIRECT_URI || `https://${process.env.RENDER_EXTERNAL_HOSTNAME || 'localhost:' + PORT}/callback`;
 
-if (!authConfig.accessToken) {
-  throw new MCPConfigError("HUBSPOT_ACCESS_TOKEN (OAuth o PAT) es requerido para la HubSpot Auth App");
-}
+// Configuración de la App (Client ID y Secret obtenidos de HubSpot Developer Portal)
+const CLIENT_ID = process.env.HUBSPOT_CLIENT_ID;
+const CLIENT_SECRET = process.env.HUBSPOT_CLIENT_SECRET;
 
-const hubspot = new HubSpotClient(authConfig);
+// En un entorno Senior, esto iría a una DB (Redis/Postgres). 
+// Para el sandbox lo mantenemos en memoria para que el servidor sea funcional inmediatamente.
+let currentAccessToken = process.env.HUBSPOT_ACCESS_TOKEN; 
 
 const server = new FastMCP({
   name: "HubSpot Senior Automation MCP",
-  version: "1.1.0",
+  version: "1.2.0",
 });
 
-// Lista completa de objetos según documentación oficial (incluye Carts y nuevos objetos)
+// Middleware/Helper para instanciar el cliente con el token actual
+const getClient = () => {
+  if (!currentAccessToken) throw new Error("App no autorizada. Ve a /install primero.");
+  return new HubSpotClient({ accessToken: currentAccessToken });
+};
+
+// --- ENDPOINTS DE OAUTH PARA LA APP ---
+
+// 1. Ruta para iniciar la instalación
+server.get("/install", (req, res) => {
+  const scopes = "crm.objects.contacts.read crm.objects.contacts.write crm.objects.deals.read crm.objects.deals.write e-commerce";
+  const authUrl = `https://app.hubspot.com/oauth/authorize?client_id=${CLIENT_ID}&redirect_uri=${REDIRECT_URI}&scope=${scopes}`;
+  res.redirect(authUrl);
+});
+
+// 2. Ruta de Callback para recibir el código y canjearlo
+server.get("/callback", async (req, res) => {
+  const code = req.query.code;
+  if (!code) return res.status(400).send("No code provided");
+
+  try {
+    const response = await axios.post("https://api.hubapi.com/oauth/v1/token", new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: CLIENT_ID!,
+      client_secret: CLIENT_SECRET!,
+      redirect_uri: REDIRECT_URI,
+      code: code as string,
+    }));
+
+    currentAccessToken = response.data.access_token;
+    console.log("¡Token de HubSpot actualizado exitosamente!");
+    res.send("Instalación completada. Ya puedes usar el servidor MCP.");
+  } catch (error: any) {
+    console.error("Error en OAuth:", error.response?.data || error.message);
+    res.status(500).send("Error durante la autorización.");
+  }
+});
+
+// --- HERRAMIENTAS MCP ---
 const CRM_OBJECTS = [
   { type: "contacts", name: "contact", searchProp: "email" },
   { type: "companies", name: "company", searchProp: "name" },
   { type: "deals", name: "deal", searchProp: "dealname" },
-  { type: "tickets", name: "ticket", searchProp: "subject" },
-  { type: "products", name: "product", searchProp: "name" },
-  { type: "line_items", name: "line_item", searchProp: "name" },
-  { type: "quotes", name: "quote", searchProp: "hs_title" },
-  { type: "carts", name: "cart", searchProp: "hs_external_id" }, // E-commerce crucial
-  { type: "invoices", name: "invoice", searchProp: "invoice_number" },
-  { type: "subscriptions", name: "subscription", searchProp: "name" },
+  { type: "carts", name: "cart", searchProp: "hs_external_id" },
 ];
 
 CRM_OBJECTS.forEach((obj) => {
-  // Lógica de obtención (Read)
   server.addTool({
     name: `hubspot_get_${obj.name}`,
-    description: `Obtiene detalles de ${obj.name} con propiedades opcionales.`,
-    parameters: z.object({
-      id: z.string(),
-      properties: z.array(z.string()).optional(),
-    }),
+    description: `Obtiene un ${obj.name} por ID.`,
+    parameters: z.object({ id: z.string() }),
     execute: async (args) => {
-      const result = await hubspot.getObject(obj.type, args.id, args.properties);
-      return JSON.stringify(result, null, 2);
-    },
-  });
-
-  // Lógica de búsqueda (Search)
-  server.addTool({
-    name: `hubspot_search_${obj.type}`,
-    description: `Busca ${obj.type} usando filtros avanzados.`,
-    parameters: z.object({
-      query: z.string(),
-      property: z.string().optional().describe(`Default: ${obj.searchProp}`),
-      properties: z.array(z.string()).optional(),
-    }),
-    execute: async (args) => {
-      const prop = args.property || obj.searchProp;
-      const result = await hubspot.searchObjects(obj.type, [
-        { propertyName: prop, operator: "EQ", value: args.query }
-      ], args.properties);
-      return JSON.stringify(result, null, 2);
-    },
-  });
-
-  // Lógica de creación (Write - Senior Feature)
-  server.addTool({
-    name: `hubspot_create_${obj.name}`,
-    description: `Crea un nuevo ${obj.name} en el CRM.`,
-    parameters: z.object({
-      properties: z.record(z.any()),
-    }),
-    execute: async (args) => {
-      const result = await hubspot.createObject(obj.type, args.properties);
+      const result = await getClient().getObject(obj.type, args.id);
       return JSON.stringify(result, null, 2);
     },
   });
 });
 
-// Herramienta de Pipeline Senior: Vincular objetos (Associations)
-server.addTool({
-  name: "hubspot_associate_objects",
-  description: "Asocia dos objetos (ej. Contacto con Deal).",
-  parameters: z.object({
-    fromObjectType: z.string(),
-    fromObjectId: z.string(),
-    toObjectType: z.string(),
-    toObjectId: z.string(),
-    associationCategory: z.string().default("HUBSPOT_DEFINED"),
-    associationTypeId: z.number(), // ID de la asociación
-  }),
-  execute: async (args) => {
-    const path = `/crm/v3/associations/${args.fromObjectType}/${args.toObjectType}/batch/create`;
-    const result = await hubspot.request('POST', path, {
-      inputs: [{
-        from: { id: args.fromObjectId },
-        to: { id: args.toObjectId },
-        type: args.associationCategory,
-        typeId: args.associationTypeId
-      }]
-    });
-    return JSON.stringify(result, null, 2);
-  }
+// Health check para Render
+server.get("/health", (req, res) => {
+  res.json({ status: "ok", authorized: !!currentAccessToken });
 });
-
-const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
 server.start({
   transportType: "httpStream",
@@ -121,4 +94,5 @@ server.start({
   }
 }).then(() => {
   console.log(`Senior HubSpot MCP Server running on port ${PORT}`);
+  console.log(`Redirect URI configurada: ${REDIRECT_URI}`);
 });
