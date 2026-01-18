@@ -7,7 +7,8 @@ vi.mock("axios");
 describe("HubSpotClient", () => {
   it("should initialize with correct headers", () => {
     const token = "pat-123";
-    new HubSpotClient(token);
+    // Corregido: Ahora pasamos el objeto de configuración
+    new HubSpotClient({ accessToken: token });
     expect(axios.create).toHaveBeenCalledWith(expect.objectContaining({
       headers: expect.objectContaining({
         Authorization: `Bearer ${token}`
@@ -23,7 +24,7 @@ describe("HubSpotClient", () => {
       get: mockAxios.get
     });
 
-    const client = new HubSpotClient("token");
+    const client = new HubSpotClient({ accessToken: "token" });
     const result = await client.getObject("contacts", "123");
     
     expect(result).toEqual({ id: "123" });
