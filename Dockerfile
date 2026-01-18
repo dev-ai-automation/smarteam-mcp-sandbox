@@ -22,7 +22,7 @@ WORKDIR /app
 
 # Copiar solo lo necesario para ejecución
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm ci --omit=dev
 
 # Copiar el código compilado desde la etapa builder
 COPY --from=builder /app/dist ./dist
