@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: hubspot-mcp-server
+    env: docker
+    plan: free
+    region: oregon
+    envVars:
+      - key: HUBSPOT_ACCESS_TOKEN
+        sync: false
+      - key: PORT
+        value: 3000
