@@ -7,5 +7,12 @@ services:
     envVars:
       - key: HUBSPOT_ACCESS_TOKEN
         sync: false
+        description: "Access Token (OAuth) o PAT de HubSpot"
+      - key: HUBSPOT_CLIENT_ID
+        sync: false
+        description: "Client ID de tu HubSpot Auth App"
+      - key: HUBSPOT_CLIENT_SECRET
+        sync: false
+        description: "Client Secret de tu HubSpot Auth App"
       - key: PORT
         value: 3000

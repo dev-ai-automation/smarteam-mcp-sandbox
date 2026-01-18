@@ -1,11 +1,18 @@
 import axios, { AxiosInstance } from 'axios';
 import { HubSpotError } from '../utils/errors.js';
 
+export interface HubSpotAuthConfig {
+  clientId?: string;
+  clientSecret?: string;
+  refreshToken?: string;
+  accessToken?: string; // Puede ser PAT o OAuth Access Token
+}
+
 export class HubSpotClient {
   private client: AxiosInstance;
 
-  constructor(token: string) {
-    // Detectamos si es un PAT (suele empezar con pat-) o un token de OAuth
+  constructor(config: HubSpotAuthConfig) {
+    const token = config.accessToken;
     this.client = axios.create({
       baseURL: 'https://api.hubapi.com',
       headers: {
@@ -15,7 +22,8 @@ export class HubSpotClient {
     });
   }
 
-  async request(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, data?: any) {
+  // Método centralizado para peticiones (escalable para pipelines)
+  async request(method: string, path: string, data?: any) {
     try {
       const response = await this.client({ method, url: path, data });
       return response.data;
@@ -27,15 +35,16 @@ export class HubSpotClient {
     }
   }
 
-  // Métodos genéricos para CRUD de objetos CRM
-  async getObject(objectType: string, id: string, idProperty?: string) {
-    const query = idProperty ? `?idProperty=${idProperty}` : '';
-    return this.request('GET', `/crm/v3/objects/${objectType}/${id}${query}`);
+  // Soporte para todos los objetos CRM + E-commerce (Carts)
+  async getObject(objectType: string, id: string, properties?: string[]) {
+    const props = properties ? `?properties=${properties.join(',')}` : '';
+    return this.request('GET', `/crm/v3/objects/${objectType}/${id}${props}`);
   }
 
-  async searchObjects(objectType: string, filters: any[]) {
+  async searchObjects(objectType: string, filters: any[], properties?: string[]) {
     return this.request('POST', `/crm/v3/objects/${objectType}/search`, {
       filterGroups: [{ filters }],
+      properties: properties || []
     });
   }
 

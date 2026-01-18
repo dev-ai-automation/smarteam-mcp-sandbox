@@ -6,92 +6,111 @@ import { MCPConfigError } from "./utils/errors.js";
 
 dotenv.config();
 
-const accessToken = process.env.HUBSPOT_ACCESS_TOKEN;
-if (!accessToken) {
-  throw new MCPConfigError("HUBSPOT_ACCESS_TOKEN is required in environment variables");
+// Configuración flexible para MCP Auth Apps
+const authConfig = {
+  accessToken: process.env.HUBSPOT_ACCESS_TOKEN, // Token obtenido del flujo OAuth de tu HubSpot App
+  clientId: process.env.HUBSPOT_CLIENT_ID,
+  clientSecret: process.env.HUBSPOT_CLIENT_SECRET,
+};
+
+if (!authConfig.accessToken) {
+  throw new MCPConfigError("HUBSPOT_ACCESS_TOKEN (OAuth o PAT) es requerido para la HubSpot Auth App");
 }
 
-const hubspot = new HubSpotClient(accessToken);
+const hubspot = new HubSpotClient(authConfig);
 
 const server = new FastMCP({
-  name: "HubSpot Revops MCP Server",
-  version: "1.0.0",
+  name: "HubSpot Senior Automation MCP",
+  version: "1.1.0",
 });
 
-// Definición de Objetos CRM y sus campos de búsqueda por defecto
+// Lista completa de objetos según documentación oficial (incluye Carts y nuevos objetos)
 const CRM_OBJECTS = [
-  { type: "contacts", name: "contact", searchProp: "email", description: "un contacto" },
-  { type: "companies", name: "company", searchProp: "name", description: "una empresa" },
-  { type: "deals", name: "deal", searchProp: "dealname", description: "un negocio (deal)" },
-  { type: "tickets", name: "ticket", searchProp: "subject", description: "un ticket" },
-  { type: "products", name: "product", searchProp: "name", description: "un producto" },
-  { type: "line_items", name: "line_item", searchProp: "name", description: "un ítem de línea" },
-  { type: "quotes", name: "quote", searchProp: "hs_title", description: "una cotización" },
-  { type: "invoices", name: "invoice", searchProp: "invoice_number", description: "una factura" },
-  { type: "orders", name: "order", searchProp: "order_number", description: "un pedido" },
-  { type: "subscriptions", name: "subscription", searchProp: "name", description: "una suscripción" },
+  { type: "contacts", name: "contact", searchProp: "email" },
+  { type: "companies", name: "company", searchProp: "name" },
+  { type: "deals", name: "deal", searchProp: "dealname" },
+  { type: "tickets", name: "ticket", searchProp: "subject" },
+  { type: "products", name: "product", searchProp: "name" },
+  { type: "line_items", name: "line_item", searchProp: "name" },
+  { type: "quotes", name: "quote", searchProp: "hs_title" },
+  { type: "carts", name: "cart", searchProp: "hs_external_id" }, // E-commerce crucial
+  { type: "invoices", name: "invoice", searchProp: "invoice_number" },
+  { type: "subscriptions", name: "subscription", searchProp: "name" },
 ];
 
 CRM_OBJECTS.forEach((obj) => {
-  // TOOL: Get by ID
+  // Lógica de obtención (Read)
   server.addTool({
-    name: `get_${obj.name}`,
-    description: `Obtener ${obj.description} por su ID interno`,
+    name: `hubspot_get_${obj.name}`,
+    description: `Obtiene detalles de ${obj.name} con propiedades opcionales.`,
     parameters: z.object({
-      id: z.string().describe("ID del objeto en HubSpot"),
+      id: z.string(),
+      properties: z.array(z.string()).optional(),
     }),
     execute: async (args) => {
-      const result = await hubspot.getObject(obj.type, args.id);
+      const result = await hubspot.getObject(obj.type, args.id, args.properties);
       return JSON.stringify(result, null, 2);
     },
   });
 
-  // TOOL: Search
+  // Lógica de búsqueda (Search)
   server.addTool({
-    name: `search_${obj.type}`,
-    description: `Buscar ${obj.type} por una propiedad específica`,
+    name: `hubspot_search_${obj.type}`,
+    description: `Busca ${obj.type} usando filtros avanzados.`,
     parameters: z.object({
-      query: z.string().describe("Valor a buscar"),
-      property: z.string().optional().describe(`Propiedad a buscar (default: ${obj.searchProp})`),
+      query: z.string(),
+      property: z.string().optional().describe(`Default: ${obj.searchProp}`),
+      properties: z.array(z.string()).optional(),
     }),
     execute: async (args) => {
-      const property = args.property || obj.searchProp;
+      const prop = args.property || obj.searchProp;
       const result = await hubspot.searchObjects(obj.type, [
-        { propertyName: property, operator: "CONTAINS_TOKEN", value: args.query },
-      ]);
+        { propertyName: prop, operator: "EQ", value: args.query }
+      ], args.properties);
       return JSON.stringify(result, null, 2);
     },
   });
 
-  // TOOL: Create
+  // Lógica de creación (Write - Senior Feature)
   server.addTool({
-    name: `create_${obj.name}`,
-    description: `Crear ${obj.description} en HubSpot`,
+    name: `hubspot_create_${obj.name}`,
+    description: `Crea un nuevo ${obj.name} en el CRM.`,
     parameters: z.object({
-      properties: z.record(z.any()).describe("Propiedades del objeto a crear"),
+      properties: z.record(z.any()),
     }),
     execute: async (args) => {
       const result = await hubspot.createObject(obj.type, args.properties);
       return JSON.stringify(result, null, 2);
     },
   });
-
-  // TOOL: Update
-  server.addTool({
-    name: `update_${obj.name}`,
-    description: `Actualizar ${obj.description} existente`,
-    parameters: z.object({
-      id: z.string().describe("ID del objeto a actualizar"),
-      properties: z.record(z.any()).describe("Propiedades a modificar"),
-    }),
-    execute: async (args) => {
-      const result = await hubspot.updateObject(obj.type, args.id, args.properties);
-      return JSON.stringify(result, null, 2);
-    },
-  });
 });
 
-// Health check endpoint simple (FastMCP maneja esto internamente pero añadimos log)
+// Herramienta de Pipeline Senior: Vincular objetos (Associations)
+server.addTool({
+  name: "hubspot_associate_objects",
+  description: "Asocia dos objetos (ej. Contacto con Deal).",
+  parameters: z.object({
+    fromObjectType: z.string(),
+    fromObjectId: z.string(),
+    toObjectType: z.string(),
+    toObjectId: z.string(),
+    associationCategory: z.string().default("HUBSPOT_DEFINED"),
+    associationTypeId: z.number(), // ID de la asociación
+  }),
+  execute: async (args) => {
+    const path = `/crm/v3/associations/${args.fromObjectType}/${args.toObjectType}/batch/create`;
+    const result = await hubspot.request('POST', path, {
+      inputs: [{
+        from: { id: args.fromObjectId },
+        to: { id: args.toObjectId },
+        type: args.associationCategory,
+        typeId: args.associationTypeId
+      }]
+    });
+    return JSON.stringify(result, null, 2);
+  }
+});
+
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
 server.start({
@@ -101,6 +120,5 @@ server.start({
     endpoint: "/sse",
   }
 }).then(() => {
-  console.log(`FastMCP HubSpot Server running on port ${PORT}`);
-  console.log(`SSE endpoint: http://localhost:${PORT}/sse`);
+  console.log(`Senior HubSpot MCP Server running on port ${PORT}`);
 });
